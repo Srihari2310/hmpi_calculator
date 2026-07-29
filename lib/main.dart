@@ -1,8 +1,19 @@
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'firebase_options.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:geolocator/geolocator.dart';
+import 'location_picker_page.dart';
+import 'hei_calculator_page.dart';
+import 'mi_calculator_page.dart';
+import 'cd_calculator_page.dart';
+import 'widgets/result_gauge_card.dart';
+import 'widgets/metal_input_field.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -324,8 +335,8 @@ final indexOptions = [
     description: 'Evaluate overall quality of water regarding heavy metals.',
     icon: Icons.analytics_outlined,
     gradientColors: [Colors.blue.shade400, Colors.indigo.shade600],
-    isActive: false,
-    statusText: 'Coming Soon',
+    isActive: true,
+    statusText: 'Active',
   ),
   IndexOption(
     code: 'MI',
@@ -333,8 +344,8 @@ final indexOptions = [
     description: 'Sum of ratios of measured metals to permissible levels.',
     icon: Icons.percent_outlined,
     gradientColors: [Colors.teal.shade400, Colors.green.shade600],
-    isActive: false,
-    statusText: 'Coming Soon',
+    isActive: true,
+    statusText: 'Active',
   ),
   IndexOption(
     code: 'Cd',
@@ -342,8 +353,8 @@ final indexOptions = [
     description: 'Sum of contamination factors for individual metals.',
     icon: Icons.bar_chart_outlined,
     gradientColors: [Colors.purple.shade400, Colors.pink.shade600],
-    isActive: false,
-    statusText: 'Coming Soon',
+    isActive: true,
+    statusText: 'Active',
   ),
 ];
 
@@ -499,12 +510,23 @@ class IndicesDashboardPage extends StatelessWidget {
                         child: IndexCard(
                           option: option,
                           onTap: () {
-                            if (option.isActive && option.code == 'HMPI') {
+                            if (option.isActive) {
+                              Widget page;
+                              switch (option.code) {
+                                case 'HMPI':
+                                  page = const HmpiHomePage();
+                                case 'HEI':
+                                  page = const HeiCalculatorPage();
+                                case 'MI':
+                                  page = const MiCalculatorPage();
+                                case 'Cd':
+                                  page = const CdCalculatorPage();
+                                default:
+                                  return;
+                              }
                               Navigator.push(
                                 context,
-                                MaterialPageRoute(
-                                  builder: (context) => const HmpiHomePage(),
-                                ),
+                                MaterialPageRoute(builder: (context) => page),
                               );
                             }
                           },
@@ -665,22 +687,24 @@ class MetalStandard {
   final String symbol;
   final double si;
   final double ii;
+  final int atomicNumber;
+  final double atomicMass;
 
-  const MetalStandard(this.name, this.symbol, this.si, this.ii);
+  const MetalStandard(this.name, this.symbol, this.si, this.ii, this.atomicNumber, this.atomicMass);
 }
 
 const metalStandards = <MetalStandard>[
-  MetalStandard('Iron', 'Fe', 1.0, 0.3),
-  MetalStandard('Manganese', 'Mn', 0.3, 0.0),
-  MetalStandard('Arsenic', 'As', 0.01, 0.0),
-  MetalStandard('Zinc', 'Zn', 5.0, 5.0),
-  MetalStandard('Copper', 'Cu', 2.0, 0.05),
-  MetalStandard('Chromium', 'Cr', 0.05, 0.0),
-  MetalStandard('Nickel', 'Ni', 0.02, 0.0),
-  MetalStandard('Lead', 'Pb', 0.01, 0.0),
-  MetalStandard('Uranium', 'U', 0.03, 0.0),
-  MetalStandard('Cadmium', 'Cd', 0.003, 0.0),
-  MetalStandard('Mercury', 'Hg', 0.001, 0.0),
+  MetalStandard('Iron', 'Fe', 1.0, 0.3, 26, 55.845),
+  MetalStandard('Manganese', 'Mn', 0.3, 0.0, 25, 54.938),
+  MetalStandard('Arsenic', 'As', 0.01, 0.0, 33, 74.922),
+  MetalStandard('Zinc', 'Zn', 5.0, 5.0, 30, 65.38),
+  MetalStandard('Copper', 'Cu', 2.0, 0.05, 29, 63.546),
+  MetalStandard('Chromium', 'Cr', 0.05, 0.0, 24, 51.996),
+  MetalStandard('Nickel', 'Ni', 0.02, 0.0, 28, 58.693),
+  MetalStandard('Lead', 'Pb', 0.01, 0.0, 82, 207.2),
+  MetalStandard('Uranium', 'U', 0.03, 0.0, 92, 238.03),
+  MetalStandard('Cadmium', 'Cd', 0.003, 0.0, 48, 112.41),
+  MetalStandard('Mercury', 'Hg', 0.001, 0.0, 80, 200.59),
 ];
 
 class HmpiHomePage extends StatefulWidget {
@@ -699,6 +723,8 @@ class _HmpiHomePageState extends State<HmpiHomePage> {
 
   double? _hpiResult;
   String? _classification;
+  LatLng? _selectedLocation;
+  bool _isLocating = false;
 
   @override
   void dispose() {
@@ -713,6 +739,27 @@ class _HmpiHomePageState extends State<HmpiHomePage> {
     final parsed = double.tryParse(value.trim());
     if (parsed == null) return 'Enter a valid number';
     if (parsed < 0) return 'Must be >= 0';
+    return null;
+  }
+
+  Future<String?> _reverseGeocode(double lat, double lng) async {
+    try {
+      final uri = Uri.https('nominatim.openstreetmap.org', '/reverse', {
+        'lat': lat.toString(),
+        'lon': lng.toString(),
+        'format': 'json',
+        'addressdetails': '1',
+      });
+      final response = await http.get(uri, headers: {
+        'User-Agent': 'hmpi_app/1.0',
+      });
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        return data['display_name'] as String?;
+      }
+    } catch (_) {
+      // Silently fail – location will still be saved as GeoPoint
+    }
     return null;
   }
 
@@ -747,7 +794,7 @@ class _HmpiHomePageState extends State<HmpiHomePage> {
     });
 
     try {
-      await FirebaseFirestore.instance.collection('hmpi_calculations').add({
+      final docData = <String, dynamic>{
         'userId': FirebaseAuth.instance.currentUser?.uid,
         'hpi': hpi,
         'classification': classification,
@@ -758,7 +805,18 @@ class _HmpiHomePageState extends State<HmpiHomePage> {
                 : double.parse(_controllers[index].text.trim()),
         },
         'createdAt': FieldValue.serverTimestamp(),
-      });
+        'indexType': 'HMPI',
+      };
+
+      if (_selectedLocation != null) {
+        docData['location'] = GeoPoint(_selectedLocation!.latitude, _selectedLocation!.longitude);
+        final address = await _reverseGeocode(_selectedLocation!.latitude, _selectedLocation!.longitude);
+        if (address != null) {
+          docData['locationName'] = address;
+        }
+      }
+
+      await FirebaseFirestore.instance.collection('hmpi_calculations').add(docData);
     } on FirebaseException catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -805,15 +863,18 @@ class _HmpiHomePageState extends State<HmpiHomePage> {
                       final standard = metalStandards[index];
                       return SizedBox(
                         width: itemWidth,
-                        child: _buildInputField(
+                        child: MetalInputField(
                           controller: _controllers[index],
-                          label: '${standard.name} (${standard.symbol})',
+                          standard: standard,
+                          validator: _numberValidator,
                         ),
                       );
                     }),
                   );
                 },
               ),
+              const SizedBox(height: 28),
+              _buildLocationSelector(),
               const SizedBox(height: 28),
               FilledButton(
                 onPressed: _calculate,
@@ -832,48 +893,112 @@ class _HmpiHomePageState extends State<HmpiHomePage> {
     );
   }
 
-  Widget _buildInputField({
-    required TextEditingController controller,
-    required String label,
-  }) {
-    return TextFormField(
-      controller: controller,
-      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      validator: _numberValidator,
-      decoration: InputDecoration(
-        labelText: label,
-        prefixIcon: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: _elementBadge(label),
+  Widget _buildLocationSelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Location (Optional)',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
         ),
-        suffixText: 'mg/L',
-        border: const OutlineInputBorder(),
-      ),
+        const SizedBox(height: 12),
+        if (_selectedLocation != null)
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.green.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.green),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.green),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Lat: ${_selectedLocation!.latitude.toStringAsFixed(4)}, Lng: ${_selectedLocation!.longitude.toStringAsFixed(4)}',
+                    style: const TextStyle(fontWeight: FontWeight.w500),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.clear, color: Colors.red),
+                  onPressed: () => setState(() => _selectedLocation = null),
+                ),
+              ],
+            ),
+          ),
+        if (_selectedLocation == null)
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _isLocating ? null : _getCurrentLocation,
+                  icon: _isLocating 
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.my_location),
+                  label: const Text('Current GPS'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () async {
+                    final LatLng? result = await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => LocationPickerPage(initialLocation: _selectedLocation),
+                      ),
+                    );
+                    if (result != null) {
+                      setState(() => _selectedLocation = result);
+                    }
+                  },
+                  icon: const Icon(Icons.map),
+                  label: const Text('Pick on Map'),
+                ),
+              ),
+            ],
+          ),
+      ],
     );
   }
 
-  Widget _elementBadge(String label) {
-    final match = RegExp(r"\((.*?)\)").firstMatch(label);
-    final symbol = match != null ? match.group(1)! : label;
-    final color = _elementColor(symbol);
-    return CircleAvatar(
-      radius: 14,
-      backgroundColor: color,
-      child: Text(
-        symbol,
-        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
-      ),
-    );
+  Future<void> _getCurrentLocation() async {
+    setState(() => _isLocating = true);
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        throw Exception('Location services are disabled.');
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          throw Exception('Location permissions are denied');
+        }
+      }
+      
+      if (permission == LocationPermission.deniedForever) {
+        throw Exception('Location permissions are permanently denied.');
+      } 
+
+      Position position = await Geolocator.getCurrentPosition();
+      setState(() {
+        _selectedLocation = LatLng(position.latitude, position.longitude);
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString())),
+        );
+      }
+    } finally {
+      setState(() => _isLocating = false);
+    }
   }
 
-  Color _elementColor(String symbol) {
-    final s = symbol.toLowerCase();
-    const nobleGases = ['he', 'ne', 'ar', 'kr', 'xe', 'rn'];
-    const metalloids = ['as', 'sb', 'te', 'b', 'si', 'ge'];
-    if (nobleGases.contains(s)) return Colors.deepPurple;
-    if (metalloids.contains(s)) return Colors.green.shade700;
-    return Colors.indigo.shade400;
-  }
+
 
   Widget _buildResultCard() {
     final color = switch (_classification) {
@@ -882,37 +1007,17 @@ class _HmpiHomePageState extends State<HmpiHomePage> {
       _ => Colors.red,
     };
 
-    return Card(
-      color: color.withValues(alpha: 0.1),
-      shape: RoundedRectangleBorder(
-        side: BorderSide(color: color, width: 1.2),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('HPI Result', style: TextStyle(fontSize: 14, color: Colors.grey)),
-            const SizedBox(height: 6),
-            Text(
-              _hpiResult!.toStringAsFixed(2),
-              style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: color),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              _classification!,
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: color),
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              'Classification: <15 Low | 15-30 Medium | >30 High\n'
-              '(Prasad & Bose scheme; critical overall limit approximately 100)',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-          ],
-        ),
-      ),
+    return ResultGaugeCard(
+      title: 'Heavy Metal Pollution Index',
+      score: _hpiResult!,
+      classification: _classification!,
+      classificationColor: color,
+      segments: const [
+        GaugeSegment(limit: 15, label: 'Low', color: Colors.green),
+        GaugeSegment(limit: 30, label: 'Medium', color: Colors.orange),
+        GaugeSegment(limit: 60, label: 'High', color: Colors.red),
+      ],
+      reference: 'Prasad & Bose scheme; critical overall limit approximately 100',
     );
   }
 }
@@ -933,7 +1038,6 @@ class PreviousReportsPage extends StatelessWidget {
           stream: FirebaseFirestore.instance
               .collection('hmpi_calculations')
               .where('userId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
-              .orderBy('createdAt', descending: true)
               .snapshots(),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
@@ -960,13 +1064,25 @@ class PreviousReportsPage extends StatelessWidget {
               );
             }
 
+            final docs = snapshot.data!.docs.toList();
+            docs.sort((a, b) {
+              final aData = a.data() as Map<String, dynamic>;
+              final bData = b.data() as Map<String, dynamic>;
+              final aTime = aData['createdAt'] as Timestamp?;
+              final bTime = bData['createdAt'] as Timestamp?;
+              if (aTime == null && bTime == null) return 0;
+              if (aTime == null) return 1;
+              if (bTime == null) return -1;
+              return bTime.compareTo(aTime);
+            });
+
             return ListView.separated(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              itemCount: snapshot.data!.docs.length,
+              itemCount: docs.length,
               separatorBuilder: (context, index) => const SizedBox(height: 12),
               itemBuilder: (context, index) {
-                final doc = snapshot.data!.docs[index];
+                final doc = docs[index];
                 final data = doc.data() as Map<String, dynamic>;
                 final hpi = data['hpi'] as double? ?? 0.0;
                 final classification = data['classification'] as String? ?? 'Unknown';
@@ -982,7 +1098,7 @@ class PreviousReportsPage extends StatelessWidget {
                         : Colors.red;
 
                 return InkWell(
-                  onTap: () => _showReportDetails(context, data, date, hpi, classification, color),
+                  onTap: () => _showReportDetails(context, doc.id, data, date, hpi, classification, color),
                   borderRadius: BorderRadius.circular(16),
                   child: Container(
                     padding: const EdgeInsets.all(16),
@@ -997,54 +1113,92 @@ class PreviousReportsPage extends StatelessWidget {
                         ),
                       ],
                     ),
-                    child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: color.withValues(alpha: 0.1),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(Icons.science, color: color),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: color.withValues(alpha: 0.1),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(Icons.science, color: color),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
-                                'HMPI Report',
-                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                              Row(
+                                children: [
+                                  Text(
+                                    '${data['indexType'] ?? 'HMPI'} Report',
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: color.withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      data['indexType'] as String? ?? 'HMPI',
+                                      style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: color),
+                                    ),
+                                  ),
+                                ],
                               ),
                               const SizedBox(height: 4),
-                              Text(
-                                date,
-                                style: const TextStyle(color: Colors.grey, fontSize: 12),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              hpi.toStringAsFixed(2),
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 18,
-                                color: color,
+                                  Text(
+                                    date,
+                                    style: const TextStyle(color: Colors.grey, fontSize: 12),
+                                  ),
+                                ],
                               ),
                             ),
-                            Text(
-                              classification,
-                              style: TextStyle(
-                                color: color,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                              ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  hpi.toStringAsFixed(2),
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 18,
+                                    color: color,
+                                  ),
+                                ),
+                                Text(
+                                  classification,
+                                  style: TextStyle(
+                                    color: color,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
+                        if (data['locationName'] != null) ...[
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Icon(Icons.location_on, size: 14, color: Colors.grey.shade600),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  data['locationName'] as String,
+                                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -1057,7 +1211,7 @@ class PreviousReportsPage extends StatelessWidget {
     );
   }
 
-  void _showReportDetails(BuildContext context, Map<String, dynamic> data, String date, double hpi, String classification, Color color) {
+  void _showReportDetails(BuildContext context, String docId, Map<String, dynamic> data, String date, double hpi, String classification, Color color) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1066,6 +1220,7 @@ class PreviousReportsPage extends StatelessWidget {
       ),
       builder: (context) {
         final concentrations = data['concentrationsMgL'] as Map<String, dynamic>? ?? {};
+        final location = data['location'] as GeoPoint?;
         
         return Padding(
           padding: EdgeInsets.only(
@@ -1106,6 +1261,35 @@ class PreviousReportsPage extends StatelessWidget {
                     Text(classification, style: TextStyle(fontSize: 16, color: color, fontWeight: FontWeight.w500)),
                     const SizedBox(height: 8),
                     Text('Tested on: $date', style: const TextStyle(color: Colors.grey)),
+                    if (data['locationName'] != null) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.location_on, size: 14, color: color),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              data['locationName'] as String,
+                              style: TextStyle(fontSize: 12, color: color),
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ] else if (location != null) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.location_on, size: 14, color: color),
+                          const SizedBox(width: 4),
+                          Text('Lat: ${location.latitude.toStringAsFixed(4)}, Lng: ${location.longitude.toStringAsFixed(4)}', style: TextStyle(fontSize: 12, color: color)),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -1129,6 +1313,41 @@ class PreviousReportsPage extends StatelessWidget {
                     }).toList(),
                   ),
                 ),
+              ),
+              const SizedBox(height: 24),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('Delete Report?'),
+                      content: const Text('This action cannot be undone.'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text('Cancel'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          style: TextButton.styleFrom(foregroundColor: Colors.red),
+                          child: const Text('Delete'),
+                        ),
+                      ],
+                    ),
+                  );
+
+                  if (confirm == true) {
+                    await FirebaseFirestore.instance.collection('hmpi_calculations').doc(docId).delete();
+                    if (context.mounted) Navigator.pop(context); // Close sheet
+                  }
+                },
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red,
+                  side: const BorderSide(color: Colors.red),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                icon: const Icon(Icons.delete),
+                label: const Text('Delete Report'),
               ),
               const SizedBox(height: 24),
             ],

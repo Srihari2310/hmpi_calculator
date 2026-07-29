@@ -53,7 +53,7 @@ class _HeatmapPageState extends State<HeatmapPage> {
   List<MapDataPoint> _filteredData = [];
   bool _isLoading = true;
   String _error = '';
-  
+
   double _currentZoom = 5.0;
 
   // Filters
@@ -77,11 +77,17 @@ class _HeatmapPageState extends State<HeatmapPage> {
 
       if (mounted) {
         setState(() {
-          _allData = snapshot.docs.map((doc) => MapDataPoint.fromDocument(doc)).toList();
-          final states = _allData.map((e) => e.state).where((s) => s.isNotEmpty).toSet().toList();
+          _allData = snapshot.docs
+              .map((doc) => MapDataPoint.fromDocument(doc))
+              .toList();
+          final states = _allData
+              .map((e) => e.state)
+              .where((s) => s.isNotEmpty)
+              .toSet()
+              .toList();
           states.sort();
           _availableStates = ['ALL', ...states];
-          
+
           _applyFilters();
           _isLoading = false;
         });
@@ -99,10 +105,12 @@ class _HeatmapPageState extends State<HeatmapPage> {
   void _applyFilters() {
     setState(() {
       _filteredData = _allData.where((item) {
-        if (_selectedState != 'ALL' && item.state != _selectedState) return false;
+        if (_selectedState != 'ALL' && item.state != _selectedState)
+          return false;
         if (item.hpi < _minHpi) return false;
         if (_searchQuery.isNotEmpty) {
-          final locStr = '${item.location} ${item.district} ${item.state}'.toLowerCase();
+          final locStr =
+              '${item.location} ${item.district} ${item.state}'.toLowerCase();
           if (!locStr.contains(_searchQuery.toLowerCase())) return false;
         }
         return true;
@@ -141,7 +149,8 @@ class _HeatmapPageState extends State<HeatmapPage> {
           children: [
             CircularProgressIndicator(color: Colors.blue),
             SizedBox(height: 16),
-            Text('Fetching Native Data from Firestore...', style: TextStyle(color: Colors.black54)),
+            Text('Fetching Native Data from Firestore...',
+                style: TextStyle(color: Colors.black54)),
           ],
         ),
       );
@@ -151,7 +160,8 @@ class _HeatmapPageState extends State<HeatmapPage> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(16.0),
-          child: Text('Error: $_error', style: const TextStyle(color: Colors.red)),
+          child:
+              Text('Error: $_error', style: const TextStyle(color: Colors.red)),
         ),
       );
     }
@@ -203,20 +213,22 @@ class _HeatmapPageState extends State<HeatmapPage> {
         HeatMapLayer(
           heatMapDataSource: InMemoryHeatMapDataSource(data: heatPoints),
           heatMapOptions: HeatMapOptions(
-            // MASSIVE radius to cover the entire country natively
-            radius: 120 * math.pow(1.4, math.max(0, _currentZoom - 5)).toDouble(),
-            blurFactor: 0.9,
-            minOpacity: 0.01, // Near zero so NO area is blank
+            // Reduced radius to prevent excessive overlapping summation
+            radius:
+                40 * math.pow(1.2, math.max(0, _currentZoom - 5)).toDouble(),
+            blurFactor: 0.8,
+            minOpacity: 0.01,
             gradient: {
               0.01: Colors.blue,
-              0.3: Colors.yellow,
-              0.8: Colors.orange,
+              0.3: Colors
+                  .blue, // Stretch blue so it dominates low-to-medium density
+              0.5: Colors.yellow, // High density/HPI required to reach yellow
+              0.9: Colors.orange, // Extreme density required for orange
               1.0: Colors.red,
             },
           ),
         ),
-        if (_currentZoom >= 9)
-          CircleLayer(circles: markers),
+        if (_currentZoom >= 9) CircleLayer(circles: markers),
       ],
     );
   }
@@ -233,7 +245,10 @@ class _HeatmapPageState extends State<HeatmapPage> {
               width: double.infinity,
               child: const Text(
                 'HMPI Dashboard',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white),
               ),
             ),
             Expanded(
@@ -254,8 +269,10 @@ class _HeatmapPageState extends State<HeatmapPage> {
 
   Widget _buildStatsSection() {
     final total = _filteredData.length;
-    final avgHpi = total == 0 ? 0.0 : _filteredData.map((e) => e.hpi).reduce((a, b) => a + b) / total;
-    
+    final avgHpi = total == 0
+        ? 0.0
+        : _filteredData.map((e) => e.hpi).reduce((a, b) => a + b) / total;
+
     int low = 0, med = 0, high = 0;
     for (var item in _filteredData) {
       if (item.hpi < 15) {
@@ -270,7 +287,11 @@ class _HeatmapPageState extends State<HeatmapPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('📊 Summary Statistics', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+        const Text('📊 Summary Statistics',
+            style: TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.bold)),
         const SizedBox(height: 16),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -302,7 +323,11 @@ class _HeatmapPageState extends State<HeatmapPage> {
         children: [
           Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
           const SizedBox(height: 4),
-          Text(value, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+          Text(value,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold)),
         ],
       ),
     );
@@ -316,8 +341,10 @@ class _HeatmapPageState extends State<HeatmapPage> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12)),
-            Text('$count (${(pct * 100).toStringAsFixed(1)}%)', style: const TextStyle(color: Colors.white, fontSize: 12)),
+            Text(label,
+                style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            Text('$count (${(pct * 100).toStringAsFixed(1)}%)',
+                style: const TextStyle(color: Colors.white, fontSize: 12)),
           ],
         ),
         const SizedBox(height: 4),
@@ -334,9 +361,12 @@ class _HeatmapPageState extends State<HeatmapPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('🔍 Interactive Filters', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+        const Text('🔍 Interactive Filters',
+            style: TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.bold)),
         const SizedBox(height: 16),
-        
         TextField(
           style: const TextStyle(color: Colors.white),
           decoration: InputDecoration(
@@ -345,7 +375,9 @@ class _HeatmapPageState extends State<HeatmapPage> {
             prefixIcon: const Icon(Icons.search, color: Colors.grey),
             filled: true,
             fillColor: Colors.black,
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+            border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide.none),
           ),
           onChanged: (val) {
             _searchQuery = val;
@@ -353,7 +385,6 @@ class _HeatmapPageState extends State<HeatmapPage> {
           },
         ),
         const SizedBox(height: 16),
-        
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
@@ -366,7 +397,11 @@ class _HeatmapPageState extends State<HeatmapPage> {
               dropdownColor: Colors.grey.shade900,
               value: _selectedState,
               style: const TextStyle(color: Colors.white),
-              items: _availableStates.map((s) => DropdownMenuItem(value: s, child: Text(s == 'ALL' ? 'All States (India)' : s))).toList(),
+              items: _availableStates
+                  .map((s) => DropdownMenuItem(
+                      value: s,
+                      child: Text(s == 'ALL' ? 'All States (India)' : s)))
+                  .toList(),
               onChanged: (val) {
                 if (val != null) {
                   _selectedState = val;
@@ -377,8 +412,8 @@ class _HeatmapPageState extends State<HeatmapPage> {
           ),
         ),
         const SizedBox(height: 16),
-        
-        Text('Min HPI Threshold: ${_minHpi.toInt()}', style: const TextStyle(color: Colors.white70)),
+        Text('Min HPI Threshold: ${_minHpi.toInt()}',
+            style: const TextStyle(color: Colors.white70)),
         Slider(
           value: _minHpi,
           min: 0,

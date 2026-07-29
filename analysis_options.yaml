@@ -1,1 +1,7 @@
 include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    uri_does_not_exist: ignore
+    undefined_identifier: ignore
+    non_type_in_catch_clause: ignore

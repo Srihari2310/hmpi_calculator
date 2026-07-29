@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:flutter_map_heatmap/flutter_map_heatmap.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:flutter_map_heatmap/flutter_map_heatmap.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:math' as math;
 
@@ -49,19 +49,18 @@ class HeatmapPage extends StatefulWidget {
 }
 
 class _HeatmapPageState extends State<HeatmapPage> {
-  final MapController _mapController = MapController();
   List<MapDataPoint> _allData = [];
   List<MapDataPoint> _filteredData = [];
   bool _isLoading = true;
   String _error = '';
   
+  double _currentZoom = 5.0;
+
   // Filters
   String _selectedState = 'ALL';
   List<String> _availableStates = ['ALL'];
   double _minHpi = 0;
   String _searchQuery = '';
-  
-  double _currentZoom = 5.0;
 
   @override
   void initState() {
@@ -73,13 +72,12 @@ class _HeatmapPageState extends State<HeatmapPage> {
     try {
       final snapshot = await FirebaseFirestore.instance
           .collection('hmpi_calculations')
-          .limit(1000)
+          .limit(2000)
           .get();
 
       if (mounted) {
         setState(() {
           _allData = snapshot.docs.map((doc) => MapDataPoint.fromDocument(doc)).toList();
-          
           final states = _allData.map((e) => e.state).where((s) => s.isNotEmpty).toSet().toList();
           states.sort();
           _availableStates = ['ALL', ...states];
@@ -115,11 +113,11 @@ class _HeatmapPageState extends State<HeatmapPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black87,
+      backgroundColor: Colors.white,
       appBar: AppBar(
         title: const Text('India Groundwater Heatmap'),
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black87,
         elevation: 0,
         actions: [
           Builder(
@@ -141,9 +139,9 @@ class _HeatmapPageState extends State<HeatmapPage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircularProgressIndicator(color: Colors.teal),
+            CircularProgressIndicator(color: Colors.blue),
             SizedBox(height: 16),
-            Text('Fetching Groundwater Data from Firestore...', style: TextStyle(color: Colors.white70)),
+            Text('Fetching Native Data from Firestore...', style: TextStyle(color: Colors.black54)),
           ],
         ),
       );
@@ -158,14 +156,33 @@ class _HeatmapPageState extends State<HeatmapPage> {
       );
     }
 
-    final heatPoints = _filteredData.map((item) {
-      // Map HPI to a relative weight 0.0 - 1.0 (assuming HPI ~40 is highly polluted)
-      double weight = math.min(1.0, item.hpi / 40.0);
-      return WeightedLatLng(LatLng(item.lat, item.lng), weight);
+    // Convert data to native HeatMap format
+    final heatPoints = _filteredData.map((d) {
+      return WeightedLatLng(
+        LatLng(d.lat, d.lng),
+        math.min(1.0, d.hpi / 40.0), // intensity mapping
+      );
+    }).toList();
+
+    // Map to Circle Markers for zooming in
+    final markers = _filteredData.map((d) {
+      Color color = Colors.orange;
+      if (d.hpi < 15) {
+        color = Colors.blue;
+      } else if (d.hpi <= 30) {
+        color = Colors.yellow;
+      }
+
+      return CircleMarker(
+        point: LatLng(d.lat, d.lng),
+        color: color.withValues(alpha: 0.8),
+        borderStrokeWidth: 1,
+        borderColor: Colors.white,
+        radius: 8,
+      );
     }).toList();
 
     return FlutterMap(
-      mapController: _mapController,
       options: MapOptions(
         initialCenter: const LatLng(22.9734, 78.6569),
         initialZoom: 5.0,
@@ -180,91 +197,27 @@ class _HeatmapPageState extends State<HeatmapPage> {
       ),
       children: [
         TileLayer(
-          urlTemplate: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-          subdomains: const ['a', 'b', 'c', 'd'],
+          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
           userAgentPackageName: 'com.example.hmpi',
         ),
-        if (_currentZoom < 9)
-          HeatMapLayer(
-            heatMapDataSource: InMemoryHeatMapDataSource(data: heatPoints),
-            heatMapOptions: HeatMapOptions(
-              radius: 20,
-              blurFactor: 0.5,
-              minOpacity: 0.1,
-              gradient: {
-                0.1: Colors.teal,
-                0.4: Colors.amber,
-                0.8: Colors.red,
-              },
-            ),
+        HeatMapLayer(
+          heatMapDataSource: InMemoryHeatMapDataSource(data: heatPoints),
+          heatMapOptions: HeatMapOptions(
+            // MASSIVE radius to cover the entire country natively
+            radius: 120 * math.pow(1.4, math.max(0, _currentZoom - 5)).toDouble(),
+            blurFactor: 0.9,
+            minOpacity: 0.01, // Near zero so NO area is blank
+            gradient: {
+              0.01: Colors.blue,
+              0.3: Colors.yellow,
+              0.8: Colors.orange,
+              1.0: Colors.red,
+            },
           ),
+        ),
         if (_currentZoom >= 9)
-          MarkerLayer(
-            markers: _buildDetailedMarkers(),
-          ),
+          CircleLayer(circles: markers),
       ],
-    );
-  }
-
-  List<Marker> _buildDetailedMarkers() {
-    return _filteredData.map((item) {
-      Color color;
-      if (item.hpi < 15) {
-        color = Colors.teal;
-      } else if (item.hpi <= 30) {
-        color = Colors.amber;
-      } else {
-        color = Colors.red;
-      }
-
-      return Marker(
-        point: LatLng(item.lat, item.lng),
-        width: 40,
-        height: 40,
-        child: GestureDetector(
-          onTap: () => _showMarkerDetails(item, color),
-          child: Container(
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.8),
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
-            ),
-          ),
-        ),
-      );
-    }).toList();
-  }
-
-  void _showMarkerDetails(MapDataPoint item, Color color) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: Colors.grey.shade900,
-        title: Text(item.location, style: const TextStyle(color: Colors.white)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('${item.district}, ${item.state}', style: const TextStyle(color: Colors.white70)),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                const Text('HPI: ', style: TextStyle(color: Colors.white)),
-                Text(item.hpi.toStringAsFixed(2), style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 18)),
-              ],
-            ),
-            Text('Status: ${item.classification}', style: TextStyle(color: color)),
-            const Divider(color: Colors.grey),
-            Text('Year: ${item.year}', style: const TextStyle(color: Colors.white70)),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
     );
   }
 
@@ -327,11 +280,11 @@ class _HeatmapPageState extends State<HeatmapPage> {
           ],
         ),
         const SizedBox(height: 16),
-        _buildDistBar('Low (<15)', low, total, Colors.teal),
+        _buildDistBar('Low (<15)', low, total, Colors.blue),
         const SizedBox(height: 8),
-        _buildDistBar('Medium (15-30)', med, total, Colors.amber),
+        _buildDistBar('Medium (15-30)', med, total, Colors.yellow),
         const SizedBox(height: 8),
-        _buildDistBar('High (>30)', high, total, Colors.red),
+        _buildDistBar('High (>30)', high, total, Colors.orange),
       ],
     );
   }
@@ -384,7 +337,6 @@ class _HeatmapPageState extends State<HeatmapPage> {
         const Text('🔍 Interactive Filters', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
         const SizedBox(height: 16),
         
-        // Search
         TextField(
           style: const TextStyle(color: Colors.white),
           decoration: InputDecoration(
@@ -402,7 +354,6 @@ class _HeatmapPageState extends State<HeatmapPage> {
         ),
         const SizedBox(height: 16),
         
-        // State Dropdown
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
@@ -427,7 +378,6 @@ class _HeatmapPageState extends State<HeatmapPage> {
         ),
         const SizedBox(height: 16),
         
-        // HPI Slider
         Text('Min HPI Threshold: ${_minHpi.toInt()}', style: const TextStyle(color: Colors.white70)),
         Slider(
           value: _minHpi,

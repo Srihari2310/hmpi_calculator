@@ -17,8 +17,7 @@ dependencies:
   flutter_map: ^7.0.2
   latlong2: ^0.9.1
   http: ^1.2.2
-  webview_flutter: ^4.14.1
-  flutter_inappwebview: ^6.1.5
+  flutter_map_heatmap: ^0.0.8
 
 dev_dependencies:
   flutter_test:

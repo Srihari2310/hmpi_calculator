@@ -12,6 +12,7 @@ import 'location_picker_page.dart';
 import 'hei_calculator_page.dart';
 import 'mi_calculator_page.dart';
 import 'cd_calculator_page.dart';
+import 'heatmap_page.dart';
 import 'widgets/result_gauge_card.dart';
 import 'widgets/metal_input_field.dart';
 
@@ -536,6 +537,39 @@ class IndicesDashboardPage extends StatelessWidget {
                   );
                 },
               ),
+              const SizedBox(height: 24),
+              // Heatmap Button
+              InkWell(
+                onTap: () {
+                  Navigator.push(context, MaterialPageRoute(builder: (context) => const HeatmapPage()));
+                },
+                borderRadius: BorderRadius.circular(24),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
+                  decoration: BoxDecoration(
+                    color: Colors.teal.shade50,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: Colors.teal.withValues(alpha: 0.2)),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.map_outlined, color: Colors.teal, size: 28),
+                          SizedBox(width: 16),
+                          Text(
+                            'India Heatmap',
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.teal),
+                          ),
+                        ],
+                      ),
+                      Icon(Icons.arrow_forward_ios, color: Colors.teal, size: 16),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
             ],
           ),
         ),
